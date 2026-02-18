@@ -39,7 +39,7 @@ FAMILY_PORTFOLIOS = {
     },
     "Test": {
         "currency": "THB",
-        "assets": {"AOT.BK": 0.60, "PTT.BK": 0.40}
+        "assets": {"TDEX.BK": 0.60, "PTT.BK": 0.40}
     }
 }
 
@@ -535,6 +535,7 @@ if check_password():
                     st.warning(f"ไม่พบข้อมูลงบการเงินของ {selected_stock} (อาจเป็น ETF หรือดึงข้อมูลไม่ได้)")
 
      
+
 
 
 
