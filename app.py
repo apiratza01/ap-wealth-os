@@ -108,34 +108,6 @@ def load_history(user_filter=None):
                 df = df[df['User'] == user_filter]
         return df
     except: return pd.DataFrame()
-
-# --- 3. MAIN LOGIC & UI ---
-if check_password():
-    st.set_page_config(page_title="AP Wealth OS", page_icon="💰", layout="wide")
-
-    # Sidebar: Profile & News
-    with st.sidebar:
-        st.header("👤 Profile")
-        user_name = st.selectbox("เลือกผู้ใช้งาน", list(FAMILY_PORTFOLIOS.keys()))
-        user_data = FAMILY_PORTFOLIOS[user_name]
-        currency = user_data['currency']
-        is_usd_port = (currency == "USD")
-        
-        st.divider()
-        st.subheader("📰 ข่าวหุ้นล่าสุด")
-        all_tickers = list(user_data['assets'].keys())
-        selected_news_ticker = st.selectbox("เลือกหุ้นเพื่ออ่านข่าว:", all_tickers, index=0)
-        
-        news_items = get_news_rss(selected_news_ticker)
-        if news_items:
-            for item in news_items:
-                st.markdown(f"➤ **[{item['title']}]({item['link']})**")
-                if item['published']:
-                    short_date = item['published'].replace(" +0000", "").replace(" GMT", "")
-                    st.caption(f"🕒 {short_date}")
-                st.markdown("---")
-            if st.button("🔄 รีเฟรชข่าว"): st.rerun()
-        else: st.info("ไม่พบข่าวใหม่")
 def get_financial_summary(ticker_symbol):
     """ดึงงบการเงินย้อนหลัง 3 ปี จาก yfinance"""
     try:
@@ -197,6 +169,34 @@ def ask_gemini_analyst(financial_data, ticker):
             return response.text
     except Exception as e:
         return f"เกิดข้อผิดพลาดกับ AI: {e}"
+# --- 3. MAIN LOGIC & UI ---
+if check_password():
+    st.set_page_config(page_title="AP Wealth OS", page_icon="💰", layout="wide")
+
+    # Sidebar: Profile & News
+    with st.sidebar:
+        st.header("👤 Profile")
+        user_name = st.selectbox("เลือกผู้ใช้งาน", list(FAMILY_PORTFOLIOS.keys()))
+        user_data = FAMILY_PORTFOLIOS[user_name]
+        currency = user_data['currency']
+        is_usd_port = (currency == "USD")
+        
+        st.divider()
+        st.subheader("📰 ข่าวหุ้นล่าสุด")
+        all_tickers = list(user_data['assets'].keys())
+        selected_news_ticker = st.selectbox("เลือกหุ้นเพื่ออ่านข่าว:", all_tickers, index=0)
+        
+        news_items = get_news_rss(selected_news_ticker)
+        if news_items:
+            for item in news_items:
+                st.markdown(f"➤ **[{item['title']}]({item['link']})**")
+                if item['published']:
+                    short_date = item['published'].replace(" +0000", "").replace(" GMT", "")
+                    st.caption(f"🕒 {short_date}")
+                st.markdown("---")
+            if st.button("🔄 รีเฟรชข่าว"): st.rerun()
+        else: st.info("ไม่พบข่าวใหม่")
+
     tab_calc, tab_hist, tab_port, tab_ai = st.tabs(["🚀 แผนลงทุน", "📜 ประวัติย้อนหลัง", "📊 สรุปภาพรวม", "🤖 AI Analyst"])
 # --- TAB 1: CALCULATOR (SMART REBALANCING) ---
     with tab_calc:
@@ -513,6 +513,7 @@ def ask_gemini_analyst(financial_data, ticker):
                     
                 else:
                     st.warning(f"ไม่พบข้อมูลงบการเงินของ {selected_stock} (อาจเป็น ETF หรือดึงข้อมูลไม่ได้)")
+
 
 
 
