@@ -4,7 +4,8 @@ import pandas as pd
 from datetime import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-
+import requests # <--- เพิ่ม
+import xml.etree.ElementTree as ET # <--- เพิ่ม
 # --- 1. CONFIGURATION ---
 FAMILY_PORTFOLIOS = {
     "มินทร์": {
@@ -22,6 +23,39 @@ FAMILY_PORTFOLIOS = {
 }
 
 # --- 2. HELPER FUNCTIONS ---
+def get_news_rss(ticker_symbol):
+    """ดึงข่าวจาก Yahoo RSS Feed (เสถียรกว่า yfinance.news)"""
+    try:
+        # URL RSS ของ Yahoo Finance
+        url = f"https://finance.yahoo.com/rss/headline?s={ticker_symbol}"
+        
+        # ต้องใส่ User-Agent เพื่อไม่ให้โดนมองว่าเป็น Bot
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=5)
+        root = ET.fromstring(response.content)
+        
+        news_items = []
+        # วนลูปดึงหัวข้อข่าว (item)
+        for item in root.findall('./channel/item')[:5]: # เอา 5 ข่าวล่าสุด
+            title = item.find('title').text
+            link = item.find('link').text
+            # พยายามดึงวันที่ (ถ้ามี)
+            pubDate = item.find('pubDate')
+            pub_date_str = pubDate.text if pubDate is not None else ""
+            
+            news_items.append({
+                'title': title,
+                'link': link,
+                'published': pub_date_str
+            })
+            
+        return news_items
+    except Exception as e:
+        # print(f"Error fetching news: {e}") # สำหรับ Debug ใน Console
+        return []
 def get_exchange_rate_safe():
     try:
         ticker = yf.Ticker("THB=X")
@@ -80,6 +114,7 @@ st.title("💰 AP Wealth OS")
 st.caption("ระบบวางแผนความมั่งคั่งครอบครัว (Family Wealth System)")
 
 # Sidebar: เลือกผู้ใช้ & ข่าว
+# Sidebar: เลือกผู้ใช้ & ข่าว
 with st.sidebar:
     st.header("👤 Profile")
     user_name = st.selectbox("เลือกผู้ใช้งาน", list(FAMILY_PORTFOLIOS.keys()))
@@ -89,21 +124,29 @@ with st.sidebar:
     
     st.divider()
     
-    # News Feed (ฟีเจอร์ใหม่)
+    # News Feed (ฉบับอัปเกรด RSS)
     st.subheader(f"📰 ข่าวหุ้น ({user_name})")
-    try:
-        # ดึงข่าวของหุ้นตัวแรกในพอร์ต
-        first_ticker = list(user_data['assets'].keys())[0]
-        news = yf.Ticker(first_ticker).news
-        if news:
-            for item in news[:3]: # โชว์ 3 ข่าวล่าสุด
-                st.markdown(f"**[{item['title']}]({item['link']})**")
-                st.caption(f"Related: {', '.join(item.get('relatedTickers', []))}")
-                st.markdown("---")
-        else:
-            st.info("ไม่มีข่าวล่าสุด")
-    except:
-        st.caption("ไม่สามารถโหลดข่าวได้")
+    
+    # ดึงหุ้นตัวแรกของพอร์ตมาโชว์ข่าว
+    first_ticker = list(user_data['assets'].keys())[0]
+    
+    # ดึงข่าวด้วย RSS
+    news_items = get_news_rss(first_ticker)
+    
+    if news_items:
+        st.caption(f"ข่าวล่าสุดของ: {first_ticker}")
+        for item in news_items:
+            st.markdown(f"➤ **[{item['title']}]({item['link']})**")
+            if item['published']:
+                # ตัดวันที่ให้สั้นลง (Fri, 18 Feb -> 18 Feb)
+                short_date = item['published'].split(', ')[1][:11] if ',' in item['published'] else item['published']
+                st.caption(f"🕒 {short_date}")
+            st.markdown("---")
+    else:
+        st.info(f"ไม่พบข่าวของ {first_ticker} ในขณะนี้")
+        # ปุ่ม Retry เผื่อเน็ตหลุด
+        if st.button("🔄 ลองโหลดใหม่"):
+            st.rerun()
 
 # สร้าง Tabs แบ่งหน้าทำงาน
 tab_calc, tab_hist = st.tabs(["🚀 แผนลงทุน (Calculator)", "📜 ประวัติย้อนหลัง (History)"])
@@ -264,3 +307,4 @@ with tab_hist:
                 st.dataframe(df_hist, use_container_width=True)
             else:
                 st.info("ยังไม่มีข้อมูลบันทึกในระบบ")
+
