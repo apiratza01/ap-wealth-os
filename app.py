@@ -5,7 +5,7 @@ from datetime import datetime
 
 # --- 1. CONFIGURATION ---
 FAMILY_PORTFOLIOS = {
-    "AP Motor 🚀 (DCA หุ้นนอก)": {
+    "มินทร์": {
         "currency": "USD",
         "assets": {
             "SCHD": 0.40,
@@ -13,12 +13,12 @@ FAMILY_PORTFOLIOS = {
             "AVGO": 0.30
         }
     },
-    "คุณแม่ 🌸 (หุ้นไทยปันผล)": {
-        "currency": "THB",
+    "ฟิวส์": {
+        "currency": "USD",
         "assets": {
-            "TISCO.BK": 0.50,
-            "LH.BK": 0.30,
-            "ADVANC.BK": 0.20
+            "VOO": 0.50,
+            "QQQ": 0.30,
+            "VNM": 0.20
         }
     },
     "คุณพ่อ 🛡️ (Safe Haven)": {
@@ -165,3 +165,4 @@ exp_return = 0.10 if is_usd_port else 0.08
 future_val = [budget_thb * 12 * y * ((1 + exp_return)**y) for y in range(1, years+1)]
 
 st.line_chart(pd.DataFrame(future_val, columns=["มูลค่าพอร์ต"]))
+
