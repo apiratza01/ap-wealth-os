@@ -98,8 +98,14 @@ def load_history(user_filter=None):
         sheet = client.open("AP_Wealth_DB").sheet1
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
-        if user_filter and not df.empty:
-            df = df[df['User'] == user_filter]
+        
+        # [เพิ่ม] แปลงตัวเลขให้เป็นตัวเลขจริงๆ (กัน Error)
+        if not df.empty:
+            df['Shares'] = pd.to_numeric(df['Shares'], errors='coerce').fillna(0)
+            df['Total_THB'] = pd.to_numeric(df['Total_THB'], errors='coerce').fillna(0)
+            
+            if user_filter:
+                df = df[df['User'] == user_filter]
         return df
     except: return pd.DataFrame()
 
@@ -242,15 +248,12 @@ if check_password():
                 'user_name': user_name
             }
 
+        # ส่วนแสดงผล (แก้ไขใหม่ แก้ Error format code 'f')
         if 'plan_result' in st.session_state:
-            # ... (ส่วนแสดงผลเหมือนเดิม ใช้โค้ดเดิมได้เลย) ...
-            # เพียงแต่แนะนำให้ copy ส่วนแสดงผลของเดิมมาแปะต่อท้ายตรงนี้
             res = st.session_state['plan_result']
             st.divider()
-            st.success("✅ คำนวณแบบ Rebalancing เรียบร้อย!")
+            st.success("✅ คำนวณเสร็จเรียบร้อย!")
             
-            # ... (แสดง Metric / Table / Save Button แบบเดิม) ...
-            # ก๊อปส่วนแสดงผลจากโค้ดเก่ามาใส่ตรงนี้ได้เลยครับ
             m1, m2, m3 = st.columns(3)
             m1.metric("💰 ยอดซื้อรวม", f"{res['total_spent']:,.0f} บาท")
             m2.metric("🐷 เงินทอน", f"{res['remaining']:,.2f} บาท", delta_color="off")
@@ -261,19 +264,45 @@ if check_password():
                 if not res['df'].empty:
                     fig = px.pie(res['df'], values='รวม (บาท)', names='หุ้น', hole=0.4, title="สัดส่วนการกระจายเงิน")
                     st.plotly_chart(fig, use_container_width=True)
+            
             with col_table:
                  if not res['df'].empty:
-                    st.dataframe(res['df'].set_index("หุ้น").style.format("{:,.2f}"), use_container_width=True)
+                    # [แก้ตรงนี้] กำหนด Format เฉพาะคอลัมน์ที่เป็นตัวเลขเท่านั้น
+                    format_dict = {
+                        "ราคา": "{:,.2f}",
+                        "จำนวน": "{:,.4f}",
+                        "รวม (บาท)": "{:,.2f}",
+                        # คอลัมน์สกุลเงินต่างประเทศ (Dynamic key)
+                        f"รวม ({currency})": "{:,.2f}"
+                    }
+                    
+                    # ใช้ format_dict แทนการ format ทั้งตาราง
+                    st.dataframe(
+                        res['df'].set_index("หุ้น").style.format(format_dict, na_rep="-"), 
+                        use_container_width=True
+                    )
                  else:
                     st.warning("พอร์ตสมดุลแล้ว ไม่ต้องซื้อเพิ่ม หรือ งบไม่พอซื้อหุ้นที่ขาด")
 
             c_save, c_copy = st.columns([1, 2])
             with c_save:
                 if st.button("💾 บันทึก (Save)", use_container_width=True):
-                    # ... (โค้ดบันทึกเดิม) ...
-                    save_rows = [[datetime.now().strftime("%Y-%m-%d %H:%M:%S"), res['user_name'], i['หุ้น'], i['จำนวน'], i['ราคา'], i['รวม (บาท)'], "V3-Rebalance"] for i in res['plan_data']]
+                    # แปลงข้อมูลก่อนบันทึกให้ชัวร์
+                    save_rows = []
+                    for i in res['plan_data']:
+                        save_rows.append([
+                            datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
+                            res['user_name'], 
+                            i['หุ้น'], 
+                            float(i['จำนวน']), 
+                            float(i['ราคา']), 
+                            float(i['รวม (บาท)']), 
+                            f"V3-Rebalance ({i.get('สถานะ', '')})" # บันทึกสถานะไปด้วย
+                        ])
+                        
                     if save_to_gsheet(save_rows):
                         st.success("บันทึกแล้ว!"); st.balloons()
+            
             with c_copy: st.code(res['line_summary'], language="text")
 
     # --- TAB 2: HISTORY ---
@@ -335,6 +364,7 @@ if check_password():
             st.dataframe(summary.set_index('Ticker').style.format("{:,.2f}"), use_container_width=True)
         else:
             st.info("ยังไม่มีข้อมูลสำหรับวิเคราะห์ กรุณาบันทึกการลงทุนก่อน")        
+
 
 
 
