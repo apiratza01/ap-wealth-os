@@ -132,16 +132,27 @@ if st.button("🚀 คำนวณแผนการซื้อ (Calculate)", t
                 line_summary += f"\n- {ticker}: {shares} หุ้น (~{cost_thb:,.0f} บ.)"
             total_spent += cost_thb
 
-    # 4.5 แสดงผล (ต้อง Indent อยู่ใน if นี้เท่านั้น!!)
+    # 4.5 แสดงผล (ต้อง Indent ย่อหน้าให้อยู่ใต้ if st.button เหมือนเดิมนะครับ)
     st.divider()
     st.success("✅ คำนวณเสร็จเรียบร้อย!")
-    st.dataframe(pd.DataFrame(plan_data).style.format("{:,.2f}"), use_container_width=True)
+    
+    # สร้าง DataFrame
+    df = pd.DataFrame(plan_data)
+    
+    # [แก้ตรงนี้] ตั้งค่า 'หุ้น' เป็น Index เพื่อไม่ให้โดน format เป็นตัวเลข
+    if not df.empty:
+        st.dataframe(
+            df.set_index("หุ้น").style.format("{:,.2f}"), 
+            use_container_width=True
+        )
+    else:
+        st.warning("ไม่มีรายการที่ต้องซื้อในเดือนนี้")
 
-    remaining = budget_thb - total_spent  # <--- ตัวแปรเจ้าปัญหาอยู่ตรงนี้
+    remaining = budget_thb - total_spent  
     
     c1, c2 = st.columns(2)
     with c1: st.metric("ยอดซื้อรวม", f"{total_spent:,.2f} บาท")
-    with c2: st.metric("เงินเหลือ", f"{remaining:,.2f} บาท") # <--- ต้องย่อหน้าให้ตรงกับ remaining ด้านบน
+    with c2: st.metric("เงินเหลือ", f"{remaining:,.2f} บาท")
 
     line_summary += f"\n\n💡 เงินเหลือ: {remaining:,.2f} บาท"
     st.code(line_summary, language="text")
@@ -152,4 +163,5 @@ st.subheader("📈 พลังของดอกเบี้ยทบต้น 
 years = st.slider("มองภาพอนาคต (ปี)", 5, 30, 20)
 exp_return = 0.10 if is_usd_port else 0.08 
 future_val = [budget_thb * 12 * y * ((1 + exp_return)**y) for y in range(1, years+1)]
+
 st.line_chart(pd.DataFrame(future_val, columns=["มูลค่าพอร์ต"]))
