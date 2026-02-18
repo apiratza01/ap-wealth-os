@@ -16,7 +16,7 @@ FAMILY_PORTFOLIOS = {
         "currency": "USD",
         "assets": {"VOO": 0.50, "QQQ": 0.30, "VNM": 0.20}
     },
-    "คุณพ่อ 🛡️ (Safe Haven)": {
+    "Test": {
         "currency": "USD",
         "assets": {"VOO": 0.60, "BRK-B": 0.40}
     }
@@ -371,6 +371,7 @@ with tab_hist:
                 st.dataframe(df_hist, use_container_width=True)
             else:
                 st.info("ยังไม่มีข้อมูลบันทึกในระบบ")
+
 
 
 
