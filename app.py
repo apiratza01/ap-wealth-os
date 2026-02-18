@@ -540,6 +540,30 @@ if check_password():
                 else:
                     st.warning(f"ไม่พบข้อมูลงบการเงินของ {selected_stock} (อาจเป็น ETF หรือดึงข้อมูลไม่ได้)")
 
+        # --- ส่วนเช็ค Model (แปะไว้ท้ายไฟล์ app.py ชั่วคราว) ---
+        st.divider()
+        st.subheader("🛠️ Debug: เช็ครายชื่อโมเดล")
+        
+        if st.button("🔍 กดเพื่อดูรายชื่อโมเดลทั้งหมด"):
+            try:
+                import google.generativeai as genai
+                # ดึง API Key จาก Secrets
+                genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+                
+                found_models = []
+                for m in genai.list_models():
+                    # กรองเฉพาะโมเดลที่คุยโต้ตอบได้ (generateContent)
+                    if 'generateContent' in m.supported_generation_methods:
+                        found_models.append(m.name)
+                
+                if found_models:
+                    st.success(f"เจอทั้งหมด {len(found_models)} โมเดล:")
+                    st.code("\n".join(found_models)) # แสดงรายชื่อให้ก๊อปปี้ง่ายๆ
+                else:
+                    st.warning("ไม่พบโมเดลที่รองรับ generateContent เลย")
+                    
+            except Exception as e:
+                st.error(f"เกิดข้อผิดพลาด: {e}")
 
 
 
