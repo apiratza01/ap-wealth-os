@@ -109,34 +109,59 @@ def load_history(user_filter=None):
         return df
     except: return pd.DataFrame()
 def get_financial_summary(ticker_symbol):
-    """ดึงงบการเงินย้อนหลัง 3 ปี จาก yfinance"""
+    """ดึงงบการเงิน (สำหรับหุ้น) หรือ ข้อมูลกองทุน (สำหรับ ETF)"""
     try:
         stock = yf.Ticker(ticker_symbol)
         
-        # ดึงงบ 3 ส่วนหลัก
+        # 1. ลองดึงงบการเงินก่อน (สำหรับหุ้นรายตัว)
         balance = stock.balance_sheet
-        income = stock.income_stmt
-        cashflow = stock.cashflow
         
-        if balance.empty or income.empty:
-            return None
+        if not balance.empty:
+            # --- กรณีเป็นหุ้น (Stock) ---
+            income = stock.income_stmt
+            cashflow = stock.cashflow
+            return f"""
+            Data Type: Individual Stock
+            Company: {ticker_symbol}
+            
+            --- Balance Sheet ---
+            {balance.iloc[:, :3].to_markdown()}
+            
+            --- Income Statement ---
+            {income.iloc[:, :3].to_markdown()}
+            
+            --- Cash Flow ---
+            {cashflow.iloc[:, :3].to_markdown()}
+            """
+        else:
+            # --- กรณีเป็นกองทุน (ETF) หรือไม่มีงบ ---
+            # ให้ดึงข้อมูลสรุป (Info) แทน
+            info = stock.info
+            
+            # ดึงเฉพาะข้อมูลสำคัญๆ ของ ETF
+            etf_data = {
+                "Name": info.get('longName', ticker_symbol),
+                "Summary": info.get('longBusinessSummary', 'No summary available'),
+                "Category": info.get('category', 'N/A'),
+                "PE Ratio": info.get('trailingPE', 'N/A'),
+                "Yield": info.get('dividendYield', 0) * 100 if info.get('dividendYield') else "N/A",
+                "Total Assets": info.get('totalAssets', 'N/A'),
+                "Top Holdings": "Please check sector allocation below" # yfinance ฟรีมักไม่โชว์ Top Holdings
+            }
+            
+            return f"""
+            Data Type: ETF / Fund
+            Ticker: {ticker_symbol}
+            Fund Name: {etf_data['Name']}
+            Category: {etf_data['Category']}
+            Dividend Yield: {etf_data['Yield']}%
+            
+            --- Fund Summary ---
+            {etf_data['Summary']}
+            """
 
-        # แปลงเป็น Text เพื่อส่งให้ AI อ่าน (เอาแค่ 3 ปีล่าสุด)
-        data_str = f"""
-        Company: {ticker_symbol}
-        
-        --- Balance Sheet (Unit: Currency) ---
-        {balance.iloc[:, :3].to_markdown()}
-        
-        --- Income Statement ---
-        {income.iloc[:, :3].to_markdown()}
-        
-        --- Cash Flow ---
-        {cashflow.iloc[:, :3].to_markdown()}
-        """
-        return data_str
     except Exception as e:
-        st.error(f"ดึงงบไม่สำเร็จ: {e}")
+        # st.error(f"ดึงข้อมูลไม่ได้: {e}") # ปิด error ไว้จะได้ไม่รก
         return None
 
 def ask_gemini_analyst(financial_data, ticker):
@@ -513,6 +538,7 @@ if check_password():
                     
                 else:
                     st.warning(f"ไม่พบข้อมูลงบการเงินของ {selected_stock} (อาจเป็น ETF หรือดึงข้อมูลไม่ได้)")
+
 
 
 
