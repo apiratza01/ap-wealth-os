@@ -132,8 +132,7 @@ if check_password():
         else: st.info("ไม่พบข่าวใหม่")
 
     tab_calc, tab_hist, tab_port = st.tabs(["🚀 แผนลงทุน", "📜 ประวัติย้อนหลัง", "📊 สรุปภาพรวม"])
-
-    # --- TAB 1: CALCULATOR ---
+# --- TAB 1: CALCULATOR (SMART REBALANCING) ---
     with tab_calc:
         col1, col2 = st.columns(2)
         with col1:
@@ -142,47 +141,116 @@ if check_password():
             if is_usd_port:
                 auto_rate = get_exchange_rate_safe()
                 exchange_rate = st.number_input("💱 เรทเงิน (บาท/$)", value=auto_rate if auto_rate else 34.50, step=0.01)
-                budget_calc = budget_thb / exchange_rate
-                st.info(f"คิดเป็นเงิน: **${budget_calc:,.2f}**")
+                budget_in_currency = budget_thb / exchange_rate
+                st.info(f"คิดเป็นเงิน: **${budget_in_currency:,.2f}**")
             else:
-                exchange_rate, budget_calc = 1.0, budget_thb
-                st.info(f"คิดเป็นเงิน: **{budget_calc:,.0f} บาท**")
+                exchange_rate, budget_in_currency = 1.0, budget_thb
+                st.info(f"คิดเป็นเงิน: **{budget_in_currency:,.0f} บาท**")
 
-        if st.button("🚀 คำนวณแผนการซื้อ", type="primary", use_container_width=True):
+        if st.button("🚀 คำนวณแผนการซื้อ (Smart Rebalancing)", type="primary", use_container_width=True):
             tickers = list(user_data['assets'].keys())
             prices = {}
+            
+            # 1. ดึงราคาตลาดล่าสุด
             my_bar = st.progress(0, text="⏳ กำลังเช็คราคาตลาด...")
             for i, ticker in enumerate(tickers):
                 my_bar.progress((i + 1) / len(tickers), text=f"เช็คราคา: {ticker}")
                 prices[ticker] = get_price_safe(ticker)
             my_bar.empty()
 
-            plan_data, total_spent = [], 0
-            line_summary = f"📢 *แผนลงทุน {user_name}*\n🗓 {datetime.now().strftime('%d/%m/%Y')}\n💰 งบ: {budget_thb:,.0f} บาท\n\n🛒 *รายการที่ต้องซื้อ:*"
+            # 2. โหลดของเดิมที่มีอยู่ (Current Portfolio)
+            existing_shares = {t: 0.0 for t in tickers}
+            hist_df = load_history(user_name)
+            if not hist_df.empty:
+                # รวมจำนวนหุ้นที่เคยซื้อมาทั้งหมด
+                group = hist_df.groupby('Ticker')['Shares'].sum()
+                for t, s in group.items():
+                    if t in existing_shares:
+                        existing_shares[t] = s
 
+            # 3. คำนวณมูลค่าพอร์ตปัจจุบัน (Current Market Value)
+            current_port_value = 0
+            for t in tickers:
+                current_port_value += existing_shares[t] * prices.get(t, 0)
+            
+            # 4. เป้าหมายความมั่งคั่งรวม (ของเดิม + เงินใหม่)
+            total_wealth_target = current_port_value + budget_in_currency
+            
+            plan_data = []
+            total_spent_currency = 0
+            line_summary = f"📢 *แผนลงทุน {user_name} (Smart Rebalance)*\n🗓 {datetime.now().strftime('%d/%m/%Y')}\n💰 งบ: {budget_thb:,.0f} บาท\n"
+
+            # 5. วนลูปเช็คทีละตัว (Core Logic: Underweight vs Overweight)
             for ticker, target_pct in user_data['assets'].items():
-                target_amount = budget_calc * target_pct
                 price = prices.get(ticker, 0)
+                
                 if price > 0:
-                    shares = round(target_amount / price, 4) if is_usd_port else int(target_amount / price)
-                    cost_curr = shares * price
+                    # มูลค่าที่ "ควรจะมี" ตามเป้าหมาย
+                    target_value = total_wealth_target * target_pct
+                    
+                    # มูลค่าที่ "มีอยู่จริง"
+                    current_value = existing_shares[ticker] * price
+                    
+                    # ส่วนต่างที่ต้องเติม (Deficit)
+                    shortfall = target_value - current_value
+                    
+                    shares_to_buy = 0
+                    status = "✅ พอดี"
+                    
+                    if shortfall > 0:
+                        # Case: Underweight (ขาด) -> ต้องซื้อเพิ่ม
+                        # แต่ห้ามซื้อเกินงบที่มี (budget_in_currency)
+                        amount_to_buy = min(shortfall, budget_in_currency - total_spent_currency)
+                        
+                        # ถ้าเหลือเศษงบน้อยมากให้ข้าม
+                        if amount_to_buy > (price * 0.1): 
+                            if is_usd_port:
+                                shares_to_buy = round(amount_to_buy / price, 4)
+                            else:
+                                shares_to_buy = int(amount_to_buy / price)
+                            
+                            status = "🟢 ซื้อเพิ่ม"
+                    else:
+                        # Case: Overweight (เกิน) -> ไม่ซื้อ
+                        status = "🔴 พักก่อน (Overweight)"
+                        shares_to_buy = 0
+
+                    cost_curr = shares_to_buy * price
                     cost_thb = cost_curr * exchange_rate
-                    plan_data.append({"หุ้น": ticker, "ราคา": price, "จำนวน": shares, f"รวม ({currency})": cost_curr, "รวม (บาท)": cost_thb})
-                    if shares > 0: line_summary += f"\n- {ticker}: {shares} หุ้น (~{cost_thb:,.0f} บ.)"
-                    total_spent += cost_thb
+                    
+                    # บันทึกผล
+                    if shares_to_buy > 0:
+                        plan_data.append({
+                            "หุ้น": ticker, 
+                            "สถานะ": status,
+                            "ราคา": price, 
+                            "จำนวน": shares_to_buy, 
+                            f"รวม ({currency})": cost_curr, 
+                            "รวม (บาท)": cost_thb
+                        })
+                        line_summary += f"\n- {ticker}: {shares_to_buy} หุ้น ({status})"
+                        total_spent_currency += cost_curr
+
+            # สรุปยอดเงินบาท
+            total_spent_thb = total_spent_currency * exchange_rate
+            remaining_thb = budget_thb - total_spent_thb
 
             st.session_state['plan_result'] = {
                 'df': pd.DataFrame(plan_data), 'plan_data': plan_data,
-                'total_spent': total_spent, 'remaining': budget_thb - total_spent,
-                'line_summary': line_summary + f"\n\n💡 เงินเหลือ: {budget_thb - total_spent:,.2f} บาท",
+                'total_spent': total_spent_thb, 'remaining': remaining_thb,
+                'line_summary': line_summary + f"\n\n💡 เงินเหลือ: {remaining_thb:,.2f} บาท",
                 'user_name': user_name
             }
 
         if 'plan_result' in st.session_state:
+            # ... (ส่วนแสดงผลเหมือนเดิม ใช้โค้ดเดิมได้เลย) ...
+            # เพียงแต่แนะนำให้ copy ส่วนแสดงผลของเดิมมาแปะต่อท้ายตรงนี้
             res = st.session_state['plan_result']
             st.divider()
-            st.success("✅ คำนวณเสร็จเรียบร้อย!")
+            st.success("✅ คำนวณแบบ Rebalancing เรียบร้อย!")
             
+            # ... (แสดง Metric / Table / Save Button แบบเดิม) ...
+            # ก๊อปส่วนแสดงผลจากโค้ดเก่ามาใส่ตรงนี้ได้เลยครับ
             m1, m2, m3 = st.columns(3)
             m1.metric("💰 ยอดซื้อรวม", f"{res['total_spent']:,.0f} บาท")
             m2.metric("🐷 เงินทอน", f"{res['remaining']:,.2f} บาท", delta_color="off")
@@ -190,37 +258,23 @@ if check_password():
 
             col_chart, col_table = st.columns([1, 1])
             with col_chart:
-                fig = px.pie(res['df'], values='รวม (บาท)', names='หุ้น', hole=0.4, title="สัดส่วนการกระจายเงิน")
-                st.plotly_chart(fig, use_container_width=True)
+                if not res['df'].empty:
+                    fig = px.pie(res['df'], values='รวม (บาท)', names='หุ้น', hole=0.4, title="สัดส่วนการกระจายเงิน")
+                    st.plotly_chart(fig, use_container_width=True)
             with col_table:
-                st.dataframe(res['df'].set_index("หุ้น").style.format("{:,.2f}"), use_container_width=True)
+                 if not res['df'].empty:
+                    st.dataframe(res['df'].set_index("หุ้น").style.format("{:,.2f}"), use_container_width=True)
+                 else:
+                    st.warning("พอร์ตสมดุลแล้ว ไม่ต้องซื้อเพิ่ม หรือ งบไม่พอซื้อหุ้นที่ขาด")
 
             c_save, c_copy = st.columns([1, 2])
             with c_save:
                 if st.button("💾 บันทึก (Save)", use_container_width=True):
-                    save_rows = [[datetime.now().strftime("%Y-%m-%d %H:%M:%S"), res['user_name'], i['หุ้น'], i['จำนวน'], i['ราคา'], i['รวม (บาท)'], "V2.5-Security"] for i in res['plan_data']]
+                    # ... (โค้ดบันทึกเดิม) ...
+                    save_rows = [[datetime.now().strftime("%Y-%m-%d %H:%M:%S"), res['user_name'], i['หุ้น'], i['จำนวน'], i['ราคา'], i['รวม (บาท)'], "V3-Rebalance"] for i in res['plan_data']]
                     if save_to_gsheet(save_rows):
                         st.success("บันทึกแล้ว!"); st.balloons()
             with c_copy: st.code(res['line_summary'], language="text")
-
-        st.divider()
-        with st.expander("📈 Snowball Effect (หลังหักเงินเฟ้อ)", expanded=False):
-            cs1, cs2, cs3 = st.columns(3)
-            y_sim = cs1.slider("ระยะเวลา (ปี)", 5, 40, 20)
-            r_sim = cs2.number_input("ผลตอบแทน (%ปี)", value=8.0 if is_usd_port else 6.0) / 100
-            inf_sim = cs3.number_input("เงินเฟ้อ (%ปี)", value=3.0) / 100
-            
-            real_rate = ((1 + r_sim) / (1 + inf_sim)) - 1
-            wealth, principal = [], []
-            curr_w, curr_p = 0, 0
-            for y in range(1, y_sim + 1):
-                for m in range(12):
-                    curr_p += budget_thb
-                    curr_w = (curr_w + budget_thb) * (1 + real_rate/12)
-                wealth.append(curr_w); principal.append(curr_p)
-            
-            st.line_chart(pd.DataFrame({"เงินต้น": principal, "มูลค่าจริง": wealth}, index=range(1, y_sim+1)), color=["#FF4B4B", "#00CC96"])
-            st.caption(f"มูลค่าพอร์ตในอีก {y_sim} ปี (มูลค่าเงินปัจจุบัน): {wealth[-1]:,.0f} บาท")
 
     # --- TAB 2: HISTORY ---
     with tab_hist:
@@ -281,6 +335,7 @@ if check_password():
             st.dataframe(summary.set_index('Ticker').style.format("{:,.2f}"), use_container_width=True)
         else:
             st.info("ยังไม่มีข้อมูลสำหรับวิเคราะห์ กรุณาบันทึกการลงทุนก่อน")        
+
 
 
 
