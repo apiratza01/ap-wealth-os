@@ -171,7 +171,7 @@ def ask_gemini_analyst(financial_data, ticker):
         genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
         
         # [แก้ตรงนี้] ใช้โมเดลใหม่ gemini-1.5-flash
-        model = genai.GenerativeModel('gemini-1.5-flash') 
+        model = genai.GenerativeModel('gemini-pro') 
         
         # คำสั่ง (Prompt)
         prompt = f"""
@@ -539,6 +539,7 @@ if check_password():
                     
                 else:
                     st.warning(f"ไม่พบข้อมูลงบการเงินของ {selected_stock} (อาจเป็น ETF หรือดึงข้อมูลไม่ได้)")
+
 
 
 
