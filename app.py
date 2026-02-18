@@ -38,8 +38,8 @@ FAMILY_PORTFOLIOS = {
         "assets": {"VOO": 0.50, "QQQ": 0.30, "VNM": 0.20}
     },
     "Test": {
-        "currency": "USD",
-        "assets": {"VOO": 0.60, "BRK-B": 0.40}
+        "currency": "THB",
+        "assets": {"AOT.BK": 0.60, "PTT.BK": 0.40}
     }
 }
 
@@ -535,6 +535,7 @@ if check_password():
                     st.warning(f"ไม่พบข้อมูลงบการเงินของ {selected_stock} (อาจเป็น ETF หรือดึงข้อมูลไม่ได้)")
 
      
+
 
 
 
