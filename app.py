@@ -2,6 +2,8 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 from datetime import datetime
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 # --- 1. CONFIGURATION ---
 FAMILY_PORTFOLIOS = {
@@ -49,6 +51,25 @@ def get_price_safe(ticker_symbol):
         return 0
     except: return 0
 
+def save_to_gsheet(data_rows):
+    """บันทึกข้อมูลลง Google Sheet"""
+    try:
+        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        # ดึงจาก st.secrets
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+
+        # เปิดไฟล์ Sheet (แก้ชื่อไฟล์ตรงนี้ถ้าเปลี่ยนชื่อ)
+        sheet = client.open("AP_Wealth_DB").sheet1
+        
+        for row in data_rows:
+            sheet.append_row(row)
+        return True
+    except Exception as e:
+        st.error(f"บันทึกไม่สำเร็จ: {e}")
+        return False
+
 # --- 3. MAIN APP UI ---
 st.set_page_config(page_title="AP Wealth OS", page_icon="💰")
 st.title("💰 AP Wealth OS")
@@ -77,6 +98,7 @@ with col2:
         st.info(f"คิดเป็นเงิน: **{budget_calc:,.0f} บาท**")
 
 # --- 4. CALCULATION ENGINE ---
+# ปุ่มคำนวณ (เมื่อกด จะเก็บผลลัพธ์ลง Session State)
 if st.button("🚀 คำนวณแผนการซื้อ (Calculate)", type="primary"):
     
     # 4.1 เตรียมข้อมูล
@@ -94,13 +116,11 @@ if st.button("🚀 คำนวณแผนการซื้อ (Calculate)", t
         else: manual_input_needed.append(ticker)
     my_bar.empty()
 
-    # 4.3 กรณีดึงไม่ได้ (Manual Fallback)
+    # 4.3 กรณีดึงไม่ได้
     if manual_input_needed:
-        st.error("⚠️ ดึงราคาไม่ได้บางตัว กรุณากรอกเอง:")
-        with st.form("manual_price"):
-            for t in manual_input_needed:
-                prices[t] = st.number_input(f"ราคา {t}:", min_value=0.0)
-            if not st.form_submit_button("ยืนยัน"): st.stop()
+        st.error("⚠️ ดึงราคาไม่ได้บางตัว (ระบบจะหยุดทำงานชั่วคราว)")
+        # ในเคส manual input ต้องจัดการแยกต่างหากเพื่อความง่ายใน V1 นี้ขอข้ามไปก่อน
+        # หรือให้ใส่ราคา 0 ไปก่อนแล้วไปแก้ใน sheet
 
     # 4.4 คำนวณ (Core Logic)
     plan_data = []
@@ -120,6 +140,7 @@ if st.button("🚀 คำนวณแผนการซื้อ (Calculate)", t
             cost_curr = shares * price
             cost_thb = cost_curr * exchange_rate
             
+            # เก็บข้อมูลลง list
             plan_data.append({
                 "หุ้น": ticker,
                 "ราคา": price,
@@ -132,32 +153,71 @@ if st.button("🚀 คำนวณแผนการซื้อ (Calculate)", t
                 line_summary += f"\n- {ticker}: {shares} หุ้น (~{cost_thb:,.0f} บ.)"
             total_spent += cost_thb
 
-    # 4.5 แสดงผล (ต้อง Indent ย่อหน้าให้อยู่ใต้ if st.button เหมือนเดิมนะครับ)
+    remaining = budget_thb - total_spent
+    line_summary += f"\n\n💡 เงินเหลือ: {remaining:,.2f} บาท"
+
+    # --- บันทึกลง Session State (ความจำชั่วคราว) ---
+    st.session_state['plan_result'] = {
+        'df': pd.DataFrame(plan_data),
+        'plan_data': plan_data,
+        'total_spent': total_spent,
+        'remaining': remaining,
+        'line_summary': line_summary,
+        'user_name': user_name # จำชื่อคนคำนวณไว้ด้วย
+    }
+
+# --- 5. RESULT DISPLAY (แสดงผลจากความจำ) ---
+# ส่วนนี้จะทำงานตลอดเวลา ถ้ามีข้อมูลในความจำ
+if 'plan_result' in st.session_state:
+    result = st.session_state['plan_result']
+    df = result['df']
+
     st.divider()
     st.success("✅ คำนวณเสร็จเรียบร้อย!")
     
-    # สร้าง DataFrame
-    df = pd.DataFrame(plan_data)
-    
-    # [แก้ตรงนี้] ตั้งค่า 'หุ้น' เป็น Index เพื่อไม่ให้โดน format เป็นตัวเลข
     if not df.empty:
-        st.dataframe(
-            df.set_index("หุ้น").style.format("{:,.2f}"), 
-            use_container_width=True
-        )
+        # แสดงตาราง
+        st.dataframe(df.set_index("หุ้น").style.format("{:,.2f}"), use_container_width=True)
+        
+        # แสดงยอดเงิน
+        c1, c2 = st.columns(2)
+        with c1: st.metric("ยอดซื้อรวม", f"{result['total_spent']:,.2f} บาท")
+        with c2: st.metric("เงินเหลือ", f"{result['remaining']:,.2f} บาท")
+
+        # --- ปุ่มบันทึกข้อมูล (Save) ---
+        st.markdown("### 💾 บันทึกการลงทุน")
+        
+        # ปุ่มนี้อยู่นอก Block คำนวณแล้ว ทำให้กดได้จริง
+        if st.button("ยืนยันการบันทึกเข้า Google Sheet"):
+            save_data = []
+            txn_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            for item in result['plan_data']:
+                row = [
+                    txn_date,
+                    result['user_name'],
+                    item['หุ้น'],
+                    float(item['จำนวน']),
+                    float(item['ราคา']),
+                    float(item['รวม (บาท)']), # ต้องตรงกับ key ใน dict
+                    "Auto-Plan by AP Wealth"
+                ]
+                save_data.append(row)
+            
+            with st.spinner("กำลังบันทึก..."):
+                if save_to_gsheet(save_data):
+                    st.success(f"บันทึก {len(save_data)} รายการเรียบร้อยแล้ว!")
+                    st.balloons()
+                    # ลบความจำออกเพื่อให้เริ่มใหม่ (Optional)
+                    # del st.session_state['plan_result'] 
+
+        # แสดง Line Copy Code
+        st.code(result['line_summary'], language="text")
+        
     else:
-        st.warning("ไม่มีรายการที่ต้องซื้อในเดือนนี้")
+        st.warning("ไม่มีรายการที่ต้องซื้อ")
 
-    remaining = budget_thb - total_spent  
-    
-    c1, c2 = st.columns(2)
-    with c1: st.metric("ยอดซื้อรวม", f"{total_spent:,.2f} บาท")
-    with c2: st.metric("เงินเหลือ", f"{remaining:,.2f} บาท")
-
-    line_summary += f"\n\n💡 เงินเหลือ: {remaining:,.2f} บาท"
-    st.code(line_summary, language="text")
-
-# --- 5. SNOWBALL GRAPH (กราฟอยู่นอก if ได้ เพราะไม่ได้ใช้ตัวแปร remaining) ---
+# --- 6. SNOWBALL GRAPH ---
 st.divider()
 st.subheader("📈 พลังของดอกเบี้ยทบต้น (Snowball Effect)")
 years = st.slider("มองภาพอนาคต (ปี)", 5, 30, 20)
@@ -165,4 +225,3 @@ exp_return = 0.10 if is_usd_port else 0.08
 future_val = [budget_thb * 12 * y * ((1 + exp_return)**y) for y in range(1, years+1)]
 
 st.line_chart(pd.DataFrame(future_val, columns=["มูลค่าพอร์ต"]))
-
