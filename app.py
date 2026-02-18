@@ -229,4 +229,56 @@ if check_password():
             if not hist_df.empty:
                 st.metric("💸 เงินสะสมรวม", f"{hist_df['Total_THB'].sum():,.0f} บาท")
                 st.dataframe(hist_df.sort_values("Date", ascending=False), use_container_width=True)
-            else: st.info("ยังไม่มีข้อมูล")
+   # เพิ่ม "Portfolio" เข้าไปใน List ของ Tabs
+tab_calc, tab_hist, tab_port = st.tabs(["🚀 แผนลงทุน", "📜 ประวัติย้อนหลัง", "📊 สรุปภาพรวม"])
+
+    with tab_port:
+        st.header(f"📊 วิเคราะห์พอร์ตของ {user_name}")
+        
+        # 1. โหลดข้อมูลจาก Sheet มาคำนวณต้นทุน
+        df_all = load_history(user_name)
+        
+        if not df_all.empty:
+            # คำนวณยอดรวมรายหุ้น (Group By Ticker)
+            summary = df_all.groupby('Ticker').agg({
+                'Shares': 'sum',
+                'Total_THB': 'sum'
+            }).reset_index()
+            
+            summary['Avg_Price_THB'] = summary['Total_THB'] / summary['Shares']
+            
+            # 2. ดึงราคาตลาดปัจจุบันมาเทียบ
+            current_prices = []
+            for t in summary['Ticker']:
+                p = get_price_safe(t) # ใช้ฟังก์ชันเดิมที่มีอยู่
+                current_prices.append(p)
+            
+            summary['Current_Price'] = current_prices
+            
+            # กรณีหุ้นนอก ต้องคำนวณกลับเป็นบาท (ใช้เรทปัจจุบัน)
+            rate = get_exchange_rate_safe() or 35.0
+            summary['Market_Value_THB'] = summary.apply(
+                lambda x: (x['Shares'] * x['Current_Price'] * rate) if ".BK" not in x['Ticker'] 
+                else (x['Shares'] * x['Current_Price']), axis=1
+            )
+            
+            # 3. คำนวณ P/L
+            summary['P/L_Amount'] = summary['Market_Value_THB'] - summary['Total_THB']
+            summary['P/L_Percent'] = (summary['P/L_Amount'] / summary['Total_THB']) * 100
+            
+            # --- แสดงผล Metric รวม ---
+            total_cost = summary['Total_THB'].sum()
+            total_value = summary['Market_Value_THB'].sum()
+            total_pl = total_value - total_cost
+            
+            col_p1, col_p2, col_p3 = st.columns(3)
+            col_p1.metric("💰 มูลค่าพอร์ตปัจจุบัน", f"{total_value:,.0f} บ.")
+            col_p2.metric("📈 กำไร/ขาดทุนรวม", f"{total_pl:,.0f} บ.", f"{ (total_pl/total_cost)*100 :.2f}%")
+            col_p3.metric("💵 ต้นทุนทั้งหมด", f"{total_cost:,.0f} บ.")
+    
+            # แสดงตารางวิเคราะห์
+            st.subheader("🔍 รายละเอียดรายสินทรัพย์")
+            st.dataframe(summary.set_index('Ticker').style.format("{:,.2f}"), use_container_width=True)
+        else:
+            st.info("ยังไม่มีข้อมูลสำหรับวิเคราะห์ กรุณาบันทึกการลงทุนก่อน")         else: st.info("ยังไม่มีข้อมูล")
+
