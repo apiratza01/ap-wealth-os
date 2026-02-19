@@ -112,7 +112,7 @@ def load_history(user_filter=None):
 
 
 def send_telegram_msg(message):
-    """ส่งข้อความแจ้งเตือนเข้า Telegram"""
+    """ส่งข้อความแจ้งเตือนเข้า Telegram (เวอร์ชันโชว์ Error)"""
     try:
         token = st.secrets["TELEGRAM_TOKEN"]
         chat_id = st.secrets["TELEGRAM_CHAT_ID"]
@@ -121,13 +121,19 @@ def send_telegram_msg(message):
         payload = {
             "chat_id": chat_id,
             "text": message,
-            "parse_mode": "Markdown" # จัดรูปแบบตัวหนา/เอียงได้
+            "parse_mode": "Markdown" 
         }
         
         response = requests.post(url, json=payload)
-        return response.status_code == 200
+        
+        # เช็คว่าส่งสำเร็จไหม ถ้าไม่สำเร็จให้ฟ้องหน้าเว็บ
+        if response.status_code != 200:
+            st.error(f"❌ Telegram Error: {response.text}")
+            return False
+            
+        return True
     except Exception as e:
-        print(f"ส่ง Telegram ไม่ผ่าน: {e}")
+        st.error(f"❌ ระบบส่ง Telegram ขัดข้อง: {e}")
         return False
 def get_financial_summary(ticker_symbol):
     """ดึงงบการเงิน (สำหรับหุ้น) หรือ ข้อมูลกองทุน (สำหรับ ETF)"""
@@ -576,6 +582,7 @@ if check_password():
                     st.warning(f"ไม่พบข้อมูลงบการเงินของ {selected_stock} (อาจเป็น ETF หรือดึงข้อมูลไม่ได้)")
 
      
+
 
 
 
