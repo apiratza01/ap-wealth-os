@@ -503,6 +503,7 @@ if check_password():
    # เพิ่ม "Portfolio" เข้าไปใน List ของ Tabs
 
 
+   # --- TAB 3: PORTFOLIO ---
     with tab_port:
         st.header(f"📊 วิเคราะห์พอร์ตของ {user_name}")
         
@@ -516,28 +517,59 @@ if check_password():
                 'Total_THB': 'sum'
             }).reset_index()
             
+            # กรองเฉพาะหุ้นที่ยังมีของอยู่ (จำนวน > 0)
+            summary = summary[summary['Shares'] > 0]
+            
             summary['Avg_Price_THB'] = summary['Total_THB'] / summary['Shares']
             
-            # 2. ดึงราคาตลาดปัจจุบันมาเทียบ
+            # 2. ดึงราคาตลาดปัจจุบันและข้อมูลปันผล
             current_prices = []
-            for t in summary['Ticker']:
-                p = get_price_safe(t) # ใช้ฟังก์ชันเดิมที่มีอยู่
+            div_yields = []
+            
+            my_bar = st.progress(0, text="⏳ กำลังคำนวณราคาและปันผลล่าสุด...")
+            for i, t in enumerate(summary['Ticker']):
+                my_bar.progress((i + 1) / len(summary['Ticker']), text=f"กำลังอัปเดต: {t}")
+                
+                # ดึงราคา
+                p = get_price_safe(t)
                 current_prices.append(p)
+                
+                # ดึงอัตราปันผล (Dividend Yield)
+                try:
+                    info = yf.Ticker(t).info
+                    # หุ้นทั่วไปใช้ dividendYield, ETF มักใช้ yield
+                    dy = info.get('dividendYield') or info.get('yield') or info.get('trailingAnnualDividendYield') or 0.0
+                    div_yields.append(dy)
+                except:
+                    div_yields.append(0.0)
+                    
+            my_bar.empty()
             
             summary['Current_Price'] = current_prices
+            summary['Dividend_Yield'] = div_yields
             
-            # กรณีหุ้นนอก ต้องคำนวณกลับเป็นบาท (ใช้เรทปัจจุบัน)
-            rate = get_exchange_rate_safe() or 35.0
+            # เรทเงินสำหรับหุ้นนอก
+            rate = get_exchange_rate_safe() or 34.50
+            
+            # คำนวณมูลค่าตลาด (Market Value THB)
             summary['Market_Value_THB'] = summary.apply(
                 lambda x: (x['Shares'] * x['Current_Price'] * rate) if ".BK" not in x['Ticker'] 
                 else (x['Shares'] * x['Current_Price']), axis=1
             )
             
+            # คำนวณเงินปันผลคาดหวังต่อปี (Expected Annual Dividend THB)
+            summary['Expected_Div_THB'] = summary.apply(
+                lambda x: (x['Shares'] * (x['Current_Price'] * x['Dividend_Yield']) * rate) if ".BK" not in x['Ticker']
+                else (x['Shares'] * (x['Current_Price'] * x['Dividend_Yield'])), axis=1
+            )
+            
+            # คำนวณ Yield on Cost (YoC) = ปันผล / ต้นทุนจริง
+            summary['YoC_%'] = (summary['Expected_Div_THB'] / summary['Total_THB']) * 100
+            
             # 3. คำนวณ P/L
             summary['P/L_Amount'] = summary['Market_Value_THB'] - summary['Total_THB']
-            summary['P/L_Percent'] = (summary['P/L_Amount'] / summary['Total_THB']) * 100
             
-            # --- แสดงผล Metric รวม ---
+            # --- ส่วนแสดงผล Metric รวมของพอร์ต ---
             total_cost = summary['Total_THB'].sum()
             total_value = summary['Market_Value_THB'].sum()
             total_pl = total_value - total_cost
@@ -546,12 +578,55 @@ if check_password():
             col_p1.metric("💰 มูลค่าพอร์ตปัจจุบัน", f"{total_value:,.0f} บ.")
             col_p2.metric("📈 กำไร/ขาดทุนรวม", f"{total_pl:,.0f} บ.", f"{ (total_pl/total_cost)*100 :.2f}%")
             col_p3.metric("💵 ต้นทุนทั้งหมด", f"{total_cost:,.0f} บ.")
+            
+            st.divider()
+            
+            # ==========================================
+            # --- 🚀 ฟีเจอร์ใหม่: DIVIDEND TRACKER ---
+            # ==========================================
+            st.subheader("💸 Dividend Tracker (กระแสเงินสดคาดหวัง)")
+            st.caption("ประมาณการเงินปันผลรายปีจากจำนวนหุ้นที่ถืออยู่ ณ ปัจจุบัน (Passive Income)")
+            
+            total_div = summary['Expected_Div_THB'].sum()
+            avg_monthly_div = total_div / 12
+            port_yoc = (total_div / total_cost) * 100 if total_cost > 0 else 0
+            
+            d1, d2, d3 = st.columns(3)
+            d1.metric("🗓️ ปันผลรวมทั้งปี (คาดการณ์)", f"{total_div:,.0f} บาท/ปี")
+            d2.metric("🍰 เฉลี่ยตกเดือนละ (เงินกินขนม)", f"{avg_monthly_div:,.0f} บาท", "Passive Income")
+            d3.metric("🎯 Yield on Cost (พอร์ตรวม)", f"{port_yoc:.2f}%", "ผลตอบแทนจากทุนจริง")
+            
+            # กราฟแท่งแสดงปันผลแต่ละตัว (ให้เห็นว่าตัวไหนเป็นพระเอก)
+            fig_div = px.bar(
+                summary, x='Ticker', y='Expected_Div_THB', 
+                text=summary['Expected_Div_THB'].apply(lambda x: f"{x:,.0f} บ."),
+                title="สัดส่วนเงินปันผลรายหุ้น (ใครผลิตเงินให้เรามากที่สุด?)",
+                color='Ticker',
+                color_discrete_sequence=px.colors.qualitative.Pastel
+            )
+            fig_div.update_traces(textposition='outside')
+            st.plotly_chart(fig_div, use_container_width=True)
+            
+            # ==========================================
     
             # แสดงตารางวิเคราะห์
             st.subheader("🔍 รายละเอียดรายสินทรัพย์")
-            st.dataframe(summary.set_index('Ticker').style.format("{:,.2f}"), use_container_width=True)
+            
+            # จัดรูปแบบตารางให้ดูสวยงามและเข้าใจง่าย
+            display_df = summary[['Ticker', 'Shares', 'Avg_Price_THB', 'Total_THB', 'Market_Value_THB', 'P/L_Amount', 'Expected_Div_THB', 'YoC_%']].copy()
+            display_df.rename(columns={
+                'Shares': 'จำนวนหุ้น',
+                'Avg_Price_THB': 'ทุนเฉลี่ย (บ.)',
+                'Total_THB': 'ต้นทุนรวม (บ.)',
+                'Market_Value_THB': 'มูลค่าปัจจุบัน (บ.)',
+                'P/L_Amount': 'กำไร/ขาดทุน (บ.)',
+                'Expected_Div_THB': 'ปันผล/ปี (บ.)',
+                'YoC_%': 'YoC (%)'
+            }, inplace=True)
+            
+            st.dataframe(display_df.set_index('Ticker').style.format("{:,.2f}"), use_container_width=True)
         else:
-            st.info("ยังไม่มีข้อมูลสำหรับวิเคราะห์ กรุณาบันทึกการลงทุนก่อน")        
+            st.info("ยังไม่มีข้อมูลสำหรับวิเคราะห์ กรุณาบันทึกการลงทุนก่อน")
 # --- TAB 4: AI ANALYST ---
     with tab_ai:
         st.header("🤖 ให้ AI ช่วยแกะงบการเงิน")
@@ -584,6 +659,7 @@ if check_password():
                     st.warning(f"ไม่พบข้อมูลงบการเงินของ {selected_stock} (อาจเป็น ETF หรือดึงข้อมูลไม่ได้)")
 
      
+
 
 
 
