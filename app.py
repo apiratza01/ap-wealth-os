@@ -522,9 +522,12 @@ if check_password():
             
             summary['Avg_Price_THB'] = summary['Total_THB'] / summary['Shares']
             
-            # 2. ดึงราคาตลาดปัจจุบันและข้อมูลปันผล
+         # 2. ดึงราคาตลาดปัจจุบันและข้อมูลปันผล (อัปเกรดความแม่นยำ)
             current_prices = []
-            div_yields = []
+            div_per_share_thb_list = [] # เปลี่ยนมาเก็บค่าปันผล "ต่อหุ้น" แทน
+            
+            # ดึงเรทเงินมาก่อนเลย
+            rate = get_exchange_rate_safe() or 34.50 
             
             my_bar = st.progress(0, text="⏳ กำลังคำนวณราคาและปันผลล่าสุด...")
             for i, t in enumerate(summary['Ticker']):
@@ -534,22 +537,28 @@ if check_password():
                 p = get_price_safe(t)
                 current_prices.append(p)
                 
-                # ดึงอัตราปันผล (Dividend Yield)
+                # ดึงข้อมูลปันผล (แบบแม่นยำ)
                 try:
                     info = yf.Ticker(t).info
-                    # หุ้นทั่วไปใช้ dividendYield, ETF มักใช้ yield
-                    dy = info.get('dividendYield') or info.get('yield') or info.get('trailingAnnualDividendYield') or 0.0
-                    div_yields.append(dy)
+                    # 1. พยายามหา "จำนวนเงินปันผลต่อหุ้น" ตรงๆ ก่อน (เช่น SCHD จ่าย $2.66/หุ้น)
+                    div_rate = info.get('dividendRate') or info.get('trailingAnnualDividendRate')
+                    
+                    if div_rate is None:
+                        # 2. ถ้าไม่มี (API ไม่ส่งมา) ค่อยเอา % Yield ไปคูณราคา
+                        dy = info.get('dividendYield') or info.get('yield') or info.get('trailingAnnualDividendYield') or 0.0
+                        if dy > 1: dy = dy / 100 # กันเหนียวกรณี API บัคส่งมาเป็น 3.5 แทน 0.035
+                        div_rate = p * dy
+                        
+                    # แปลงเป็นเงินบาท (ถ้าเป็นหุ้นนอก)
+                    div_rate_thb = (div_rate * rate) if ".BK" not in t else div_rate
+                    div_per_share_thb_list.append(div_rate_thb)
                 except:
-                    div_yields.append(0.0)
+                    div_per_share_thb_list.append(0.0)
                     
             my_bar.empty()
             
             summary['Current_Price'] = current_prices
-            summary['Dividend_Yield'] = div_yields
-            
-            # เรทเงินสำหรับหุ้นนอก
-            rate = get_exchange_rate_safe() or 34.50
+            summary['Div_Per_Share_THB'] = div_per_share_thb_list
             
             # คำนวณมูลค่าตลาด (Market Value THB)
             summary['Market_Value_THB'] = summary.apply(
@@ -557,17 +566,15 @@ if check_password():
                 else (x['Shares'] * x['Current_Price']), axis=1
             )
             
-            # คำนวณเงินปันผลคาดหวังต่อปี (Expected Annual Dividend THB)
-            summary['Expected_Div_THB'] = summary.apply(
-                lambda x: (x['Shares'] * (x['Current_Price'] * x['Dividend_Yield']) * rate) if ".BK" not in x['Ticker']
-                else (x['Shares'] * (x['Current_Price'] * x['Dividend_Yield'])), axis=1
-            )
+            # คำนวณเงินปันผลคาดหวังต่อปี (จำนวนหุ้น * เงินปันผลต่อหุ้น)
+            summary['Expected_Div_THB'] = summary['Shares'] * summary['Div_Per_Share_THB']
             
             # คำนวณ Yield on Cost (YoC) = ปันผล / ต้นทุนจริง
             summary['YoC_%'] = (summary['Expected_Div_THB'] / summary['Total_THB']) * 100
             
             # 3. คำนวณ P/L
             summary['P/L_Amount'] = summary['Market_Value_THB'] - summary['Total_THB']
+            summary['P/L_Percent'] = (summary['P/L_Amount'] / summary['Total_THB']) * 100
             
             # --- ส่วนแสดงผล Metric รวมของพอร์ต ---
             total_cost = summary['Total_THB'].sum()
@@ -659,6 +666,7 @@ if check_password():
                     st.warning(f"ไม่พบข้อมูลงบการเงินของ {selected_stock} (อาจเป็น ETF หรือดึงข้อมูลไม่ได้)")
 
      
+
 
 
 
