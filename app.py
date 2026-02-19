@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 import plotly.express as px
 import math
 import google.generativeai as genai # อย่าลืม import ข้างบนสุด
+import requests # อย่าลืม import requests ข้างบนสุดนะครับ
 # --- 0. AUTHENTICATION (ระบบล็อกอิน) ---
 def check_password():
     """Returns `True` if the user had the correct password."""
@@ -108,6 +109,26 @@ def load_history(user_filter=None):
                 df = df[df['User'] == user_filter]
         return df
     except: return pd.DataFrame()
+
+
+def send_telegram_msg(message):
+    """ส่งข้อความแจ้งเตือนเข้า Telegram"""
+    try:
+        token = st.secrets["TELEGRAM_TOKEN"]
+        chat_id = st.secrets["TELEGRAM_CHAT_ID"]
+        
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown" # จัดรูปแบบตัวหนา/เอียงได้
+        }
+        
+        response = requests.post(url, json=payload)
+        return response.status_code == 200
+    except Exception as e:
+        print(f"ส่ง Telegram ไม่ผ่าน: {e}")
+        return False
 def get_financial_summary(ticker_symbol):
     """ดึงงบการเงิน (สำหรับหุ้น) หรือ ข้อมูลกองทุน (สำหรับ ETF)"""
     try:
@@ -364,26 +385,46 @@ if check_password():
                  else:
                     st.warning("พอร์ตสมดุลแล้ว ไม่ต้องซื้อเพิ่ม หรือ งบไม่พอซื้อหุ้นที่ขาด")
 
-            c_save, c_copy = st.columns([1, 2])
-            with c_save:
-                if st.button("💾 บันทึก (Save)", use_container_width=True):
-                    # แปลงข้อมูลก่อนบันทึกให้ชัวร์
-                    save_rows = []
-                    for i in res['plan_data']:
-                        save_rows.append([
-                            datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-                            res['user_name'], 
-                            i['หุ้น'], 
-                            float(i['จำนวน']), 
-                            float(i['ราคา']), 
-                            float(i['รวม (บาท)']), 
-                            f"V3-Rebalance ({i.get('สถานะ', '')})" # บันทึกสถานะไปด้วย
-                        ])
-                        
-                    if save_to_gsheet(save_rows):
-                        st.success("บันทึกแล้ว!"); st.balloons()
-            
-            with c_copy: st.code(res['line_summary'], language="text")
+               c_save, c_copy = st.columns([1, 2])
+                with c_save:
+                    if st.button("💾 บันทึก (Save)", use_container_width=True):
+                        # แปลงข้อมูลก่อนบันทึกให้ชัวร์
+                        save_rows = []
+                        for i in res['plan_data']:
+                            save_rows.append([
+                                datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
+                                res['user_name'], 
+                                i['หุ้น'], 
+                                float(i['จำนวน']), 
+                                float(i['ราคา']), 
+                                float(i['รวม (บาท)']), 
+                                f"V3-Rebalance ({i.get('สถานะ', '')})" # บันทึกสถานะไปด้วย
+                            ])
+                            
+                        if save_to_gsheet(save_rows):
+                            st.success("บันทึกแล้ว!"); st.balloons()
+                            
+                            # ==========================================
+                            # --- [ส่วนที่เพิ่มใหม่] แจ้งเตือนเข้า Telegram ---
+                            # ==========================================
+                            msg_telegram = f"📢 *อัปเดตพอร์ต {res['user_name']}*\n"
+                            msg_telegram += f"📅 {datetime.now().strftime('%d/%m/%Y')}\n"
+                            msg_telegram += f"💰 ยอดซื้อ: `{res['total_spent']:,.0f}` บาท\n\n"
+                            msg_telegram += "🛒 *สรุปรายการ:*\n"
+                            
+                            # วนลูปเอาเฉพาะตัวที่ได้ซื้อจริงๆ (จำนวน > 0)
+                            for item in res['plan_data']:
+                                if item['จำนวน'] > 0:
+                                    msg_telegram += f"• {item['หุ้น']}: {item['จำนวน']} หุ้น ({item['สถานะ']})\n"
+                                    
+                            msg_telegram += "\n✅ *บันทึกเข้าระบบเรียบร้อย*"
+                            
+                            # สั่งรันฟังก์ชันส่ง Telegram
+                            send_telegram_msg(msg_telegram)
+                            st.toast("ส่งแจ้งเตือนเข้า Telegram แล้ว ✈️")
+                            # ==========================================
+                
+                with c_copy: st.code(res['line_summary'], language="text")
         # Snowball Graph (อยู่ด้านล่างสุดของ Tab 1)
         st.divider()
         with st.expander("📈 พลังของดอกเบี้ยทบต้น (Snowball Effect) - แบบสมจริง", expanded=False):
@@ -535,6 +576,7 @@ if check_password():
                     st.warning(f"ไม่พบข้อมูลงบการเงินของ {selected_stock} (อาจเป็น ETF หรือดึงข้อมูลไม่ได้)")
 
      
+
 
 
 
